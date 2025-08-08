@@ -127,9 +127,10 @@ class KubernetesExecutor(BaseExecutor):
 
     RUNNING_POD_LOG_LINES = 100
     supports_ad_hoc_ti_run: bool = True
+    config_prefix = ""
 
     def __init__(self):
-        self.kube_config = KubeConfig()
+        self.kube_config = KubeConfig(prefix=self.config_prefix)
         self._manager = multiprocessing.Manager()
         self.task_queue: Queue[KubernetesJobType] = self._manager.Queue()
         self.result_queue: Queue[KubernetesResultsType] = self._manager.Queue()
@@ -292,12 +293,13 @@ class KubernetesExecutor(BaseExecutor):
         )
         from airflow.providers.cncf.kubernetes.kube_client import get_kube_client
 
-        self.kube_client = get_kube_client()
+        self.kube_client = get_kube_client(config_prefix=self.config_prefix)
         self.kube_scheduler = AirflowKubernetesScheduler(
             kube_config=self.kube_config,
             result_queue=self.result_queue,
             kube_client=self.kube_client,
             scheduler_job_id=self.scheduler_job_id,
+            config_prefix=self.config_prefix
         )
         self.event_scheduler = EventScheduler()
 
@@ -502,7 +504,7 @@ class KubernetesExecutor(BaseExecutor):
         namespace = None
         with suppress(Exception):
             namespace = pod_override.metadata.namespace
-        return namespace or conf.get("kubernetes_executor", "namespace")
+        return namespace or conf.get(self.config_prefix + "kubernetes_executor", "namespace")
 
     def get_task_log(self, ti: TaskInstance, try_number: int) -> tuple[list[str], list[str]]:
         messages = []
@@ -511,7 +513,7 @@ class KubernetesExecutor(BaseExecutor):
             from airflow.providers.cncf.kubernetes.kube_client import get_kube_client
             from airflow.providers.cncf.kubernetes.pod_generator import PodGenerator
 
-            client = get_kube_client()
+            client = get_kube_client(config_prefix=self.config_prefix)
 
             messages.append(f"Attempting to fetch logs from pod {ti.hostname} through kube API")
             selector = PodGenerator.build_selector_for_k8s_executor_pod(

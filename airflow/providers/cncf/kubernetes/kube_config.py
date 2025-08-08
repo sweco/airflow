@@ -21,6 +21,24 @@ from airflow.exceptions import AirflowConfigException
 from airflow.settings import AIRFLOW_HOME
 
 
+class MultiExecutorAirflowConfigParser:
+    def __init__(self, conf: AirflowConfigParser, fallback_section: str):
+        self.conf = conf
+        self.fallback_section = fallback_section
+
+    def get_all(self, section: str, key: str, func=None, **kwargs):
+        try:
+            return func(self.conf, section, key, **kwargs)
+        except AirflowConfigException:
+            return func(self.conf, self.fallback_section, key, **kwargs)
+
+
+for func in [AirflowConfigParser.get, AirflowConfigParser.getboolean, AirflowConfigParser.getint,
+             AirflowConfigParser.getjson]:
+    setattr(MultiExecutorAirflowConfigParser, func.__name__,
+            functools.partialmethod(MultiExecutorAirflowConfigParser.get_all, func=func))
+
+
 class KubeConfig:
     """Configuration for Kubernetes."""
 
@@ -28,29 +46,32 @@ class KubeConfig:
     kubernetes_section = "kubernetes_executor"
     logging_section = "logging"
 
-    def __init__(self):
-        configuration_dict = conf.as_dict(display_sensitive=True)
+    def __init__(self, prefix=""):
+        multi_executor_conf = MultiExecutorAirflowConfigParser(conf, self.kubernetes_section)
+        kubernetes_section = prefix + self.kubernetes_section
+
+        configuration_dict = multi_executor_conf.as_dict(display_sensitive=True)
         self.core_configuration = configuration_dict[self.core_section]
         self.airflow_home = AIRFLOW_HOME
-        self.dags_folder = conf.get(self.core_section, "dags_folder")
-        self.parallelism = conf.getint(self.core_section, "parallelism")
-        self.pod_template_file = conf.get(self.kubernetes_section, "pod_template_file", fallback=None)
+        self.dags_folder = multi_executor_conf.get(self.core_section, "dags_folder")
+        self.parallelism = multi_executor_conf.getint(self.core_section, "parallelism")
+        self.pod_template_file = multi_executor_conf.get(kubernetes_section, "pod_template_file", fallback=None)
 
-        self.delete_worker_pods = conf.getboolean(self.kubernetes_section, "delete_worker_pods")
-        self.delete_worker_pods_on_failure = conf.getboolean(
-            self.kubernetes_section, "delete_worker_pods_on_failure"
+        self.delete_worker_pods = multi_executor_conf.getboolean(kubernetes_section, "delete_worker_pods")
+        self.delete_worker_pods_on_failure = multi_executor_conf.getboolean(
+            kubernetes_section, "delete_worker_pods_on_failure"
         )
         self.worker_pod_pending_fatal_container_state_reasons = []
-        if conf.get(self.kubernetes_section, "worker_pod_pending_fatal_container_state_reasons", fallback=""):
-            self.worker_pod_pending_fatal_container_state_reasons = conf.get(
-                self.kubernetes_section, "worker_pod_pending_fatal_container_state_reasons"
+        if multi_executor_conf.get(kubernetes_section, "worker_pod_pending_fatal_container_state_reasons", fallback=""):
+            self.worker_pod_pending_fatal_container_state_reasons = multi_executor_conf.get(
+                kubernetes_section, "worker_pod_pending_fatal_container_state_reasons"
             ).split(",")
 
-        self.worker_pods_creation_batch_size = conf.getint(
-            self.kubernetes_section, "worker_pods_creation_batch_size"
+        self.worker_pods_creation_batch_size = multi_executor_conf.getint(
+            kubernetes_section, "worker_pods_creation_batch_size"
         )
-        self.worker_container_repository = conf.get(self.kubernetes_section, "worker_container_repository")
-        self.worker_container_tag = conf.get(self.kubernetes_section, "worker_container_tag")
+        self.worker_container_repository = multi_executor_conf.get(kubernetes_section, "worker_container_repository")
+        self.worker_container_tag = multi_executor_conf.get(kubernetes_section, "worker_container_tag")
         if self.worker_container_repository and self.worker_container_tag:
             self.kube_image = f"{self.worker_container_repository}:{self.worker_container_tag}"
         else:
@@ -60,13 +81,13 @@ class KubeConfig:
         # that if your
         # cluster has RBAC enabled, your scheduler may need service account permissions to
         # create, watch, get, and delete pods in this namespace.
-        self.kube_namespace = conf.get(self.kubernetes_section, "namespace")
-        self.multi_namespace_mode = conf.getboolean(self.kubernetes_section, "multi_namespace_mode")
-        if self.multi_namespace_mode and conf.get(
-            self.kubernetes_section, "multi_namespace_mode_namespace_list"
+        self.kube_namespace = multi_executor_conf.get(kubernetes_section, "namespace")
+        self.multi_namespace_mode = multi_executor_conf.getboolean(kubernetes_section, "multi_namespace_mode")
+        if self.multi_namespace_mode and multi_executor_conf.get(
+            kubernetes_section, "multi_namespace_mode_namespace_list"
         ):
-            self.multi_namespace_mode_namespace_list = conf.get(
-                self.kubernetes_section, "multi_namespace_mode_namespace_list"
+            self.multi_namespace_mode_namespace_list = multi_executor_conf.get(
+                kubernetes_section, "multi_namespace_mode_namespace_list"
             ).split(",")
         else:
             self.multi_namespace_mode_namespace_list = None
@@ -74,18 +95,18 @@ class KubeConfig:
         # that if your
         # cluster has RBAC enabled, your workers may need service account permissions to
         # interact with cluster components.
-        self.executor_namespace = conf.get(self.kubernetes_section, "namespace")
+        self.executor_namespace = multi_executor_conf.get(kubernetes_section, "namespace")
 
-        self.worker_pods_queued_check_interval = conf.getint(
-            self.kubernetes_section, "worker_pods_queued_check_interval"
+        self.worker_pods_queued_check_interval = multi_executor_conf.getint(
+            kubernetes_section, "worker_pods_queued_check_interval"
         )
 
-        self.kube_client_request_args = conf.getjson(
-            self.kubernetes_section, "kube_client_request_args", fallback={}
+        self.kube_client_request_args = multi_executor_conf.getjson(
+            kubernetes_section, "kube_client_request_args", fallback={}
         )
         if not isinstance(self.kube_client_request_args, dict):
             raise AirflowConfigException(
-                f"[{self.kubernetes_section}] 'kube_client_request_args' expected a JSON dict, got "
+                f"[{kubernetes_section}] 'kube_client_request_args' expected a JSON dict, got "
                 + type(self.kube_client_request_args).__name__
             )
         if self.kube_client_request_args:
@@ -95,9 +116,9 @@ class KubeConfig:
                 self.kube_client_request_args["_request_timeout"] = tuple(
                     self.kube_client_request_args["_request_timeout"]
                 )
-        self.delete_option_kwargs = conf.getjson(self.kubernetes_section, "delete_option_kwargs", fallback={})
+        self.delete_option_kwargs = multi_executor_conf.getjson(kubernetes_section, "delete_option_kwargs", fallback={})
         if not isinstance(self.delete_option_kwargs, dict):
             raise AirflowConfigException(
-                f"[{self.kubernetes_section}] 'delete_option_kwargs' expected a JSON dict, got "
+                f"[{kubernetes_section}] 'delete_option_kwargs' expected a JSON dict, got "
                 + type(self.delete_option_kwargs).__name__
             )

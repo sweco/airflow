@@ -140,6 +140,7 @@ class KubernetesHook(BaseHook, PodOperatorHookProtocol):
         in_cluster: bool | None = None,
         disable_verify_ssl: bool | None = None,
         disable_tcp_keepalive: bool | None = None,
+        config_prefix: str = "",
     ) -> None:
         super().__init__()
         self.conn_id = conn_id
@@ -150,6 +151,7 @@ class KubernetesHook(BaseHook, PodOperatorHookProtocol):
         self.disable_verify_ssl = disable_verify_ssl
         self.disable_tcp_keepalive = disable_tcp_keepalive
         self._is_in_cluster: bool | None = None
+        self.config_prefix = config_prefix
 
     @staticmethod
     def _coalesce_param(*params):
@@ -225,7 +227,7 @@ class KubernetesHook(BaseHook, PodOperatorHookProtocol):
         if disable_verify_ssl is True:
             _disable_verify_ssl()
         if disable_tcp_keepalive is not True:
-            _enable_tcp_keepalive()
+            _enable_tcp_keepalive(self.config_prefix)
 
         if in_cluster:
             self.log.debug("loading kube_config from: in_cluster configuration")
