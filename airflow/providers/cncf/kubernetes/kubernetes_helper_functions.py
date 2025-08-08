@@ -175,12 +175,12 @@ def annotations_to_key(annotations: dict[str, str]) -> TaskInstanceKey:
 
 
 @cache
-def get_logs_task_metadata() -> bool:
-    return conf.getboolean("kubernetes_executor", "logs_task_metadata")
+def get_logs_task_metadata(conf=..., config_prefix=...) -> bool:
+    return conf.getboolean(config_prefix + "kubernetes_executor", "logs_task_metadata")
 
 
-def annotations_for_logging_task_metadata(annotation_set):
-    if get_logs_task_metadata():
+def annotations_for_logging_task_metadata(annotation_set, conf=..., config_prefix=...):
+    if get_logs_task_metadata(conf=conf, config_prefix=config_prefix):
         annotations_for_logging = annotation_set
     else:
         annotations_for_logging = "<omitted>"

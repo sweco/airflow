@@ -78,6 +78,8 @@ class KubernetesJobWatcher(multiprocessing.Process, LoggingMixin):
         resource_version: str | None,
         scheduler_job_id: str,
         kube_config: Configuration,
+        conf=...,
+        config_prefix: str = ...
     ):
         super().__init__()
         self.namespace = namespace
@@ -85,13 +87,15 @@ class KubernetesJobWatcher(multiprocessing.Process, LoggingMixin):
         self.watcher_queue = watcher_queue
         self.resource_version = resource_version
         self.kube_config = kube_config
+        self.conf = conf
+        self.config_prefix = config_prefix
 
     def run(self) -> None:
         """Perform watching."""
         if TYPE_CHECKING:
             assert self.scheduler_job_id
 
-        kube_client: client.CoreV1Api = get_kube_client()
+        kube_client: client.CoreV1Api = get_kube_client(conf=self.conf, config_prefix=self.config_prefix)
         while True:
             try:
                 self.resource_version = self._run(
@@ -212,7 +216,7 @@ class KubernetesJobWatcher(multiprocessing.Process, LoggingMixin):
         event: Any,
     ) -> None:
         pod = event["object"]
-        annotations_string = annotations_for_logging_task_metadata(annotations)
+        annotations_string = annotations_for_logging_task_metadata(annotations, conf=self.conf, config_prefix=self.config_prefix)
         """Process status response."""
         if event["type"] == "DELETED" and not pod.metadata.deletion_timestamp:
             # This will happen only when the task pods are adopted by another executor.
@@ -318,6 +322,8 @@ class AirflowKubernetesScheduler(LoggingMixin):
         result_queue: Queue[KubernetesResultsType],
         kube_client: client.CoreV1Api,
         scheduler_job_id: str,
+        conf,
+        config_prefix: str,
     ):
         super().__init__()
         self.log.debug("Creating Kubernetes executor")
@@ -326,6 +332,8 @@ class AirflowKubernetesScheduler(LoggingMixin):
         self.namespace = self.kube_config.kube_namespace
         self.log.debug("Kubernetes using namespace %s", self.namespace)
         self.kube_client = kube_client
+        self.conf = conf
+        self.config_prefix = config_prefix
         self._manager = multiprocessing.Manager()
         self.watcher_queue = self._manager.Queue()
         self.scheduler_job_id = scheduler_job_id
@@ -355,6 +363,8 @@ class AirflowKubernetesScheduler(LoggingMixin):
             resource_version=resource_version,
             scheduler_job_id=self.scheduler_job_id,
             kube_config=self.kube_config,
+            conf=self.conf,
+            config_prefix=self.config_prefix,
         )
         watcher.start()
         return watcher
@@ -427,7 +437,7 @@ class AirflowKubernetesScheduler(LoggingMixin):
             "Creating kubernetes pod for job is %s, with pod name %s, annotations: %s",
             key,
             pod.metadata.name,
-            annotations_for_logging_task_metadata(pod.metadata.annotations),
+            annotations_for_logging_task_metadata(pod.metadata.annotations, conf=self.conf, config_prefix=self.config_prefix),
         )
         self.log.debug("Kubernetes running for command %s", command)
         self.log.debug("Kubernetes launching image %s", pod.spec.containers[0].image)
@@ -487,7 +497,7 @@ class AirflowKubernetesScheduler(LoggingMixin):
             "Attempting to finish pod; pod_name: %s; state: %s; annotations: %s",
             pod_name,
             state,
-            annotations_for_logging_task_metadata(annotations),
+            annotations_for_logging_task_metadata(annotations, conf=self.conf, config_prefix=self.config_prefix),
         )
         key = annotations_to_key(annotations=annotations)
         if key:

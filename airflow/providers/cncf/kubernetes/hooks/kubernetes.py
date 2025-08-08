@@ -39,6 +39,7 @@ from airflow.providers.cncf.kubernetes.kube_client import _disable_verify_ssl, _
 from airflow.providers.cncf.kubernetes.kubernetes_helper_functions import should_retry_creation
 from airflow.providers.cncf.kubernetes.utils.pod_manager import PodOperatorHookProtocol
 from airflow.utils import yaml
+from airflow.configuration import conf
 
 if TYPE_CHECKING:
     from kubernetes.client import V1JobList
@@ -140,6 +141,8 @@ class KubernetesHook(BaseHook, PodOperatorHookProtocol):
         in_cluster: bool | None = None,
         disable_verify_ssl: bool | None = None,
         disable_tcp_keepalive: bool | None = None,
+        conf=conf,
+        config_prefix: str = "",
     ) -> None:
         super().__init__()
         self.conn_id = conn_id
@@ -150,6 +153,8 @@ class KubernetesHook(BaseHook, PodOperatorHookProtocol):
         self.disable_verify_ssl = disable_verify_ssl
         self.disable_tcp_keepalive = disable_tcp_keepalive
         self._is_in_cluster: bool | None = None
+        self.conf = conf
+        self.config_prefix = config_prefix
 
     @staticmethod
     def _coalesce_param(*params):
@@ -225,7 +230,7 @@ class KubernetesHook(BaseHook, PodOperatorHookProtocol):
         if disable_verify_ssl is True:
             _disable_verify_ssl()
         if disable_tcp_keepalive is not True:
-            _enable_tcp_keepalive()
+            _enable_tcp_keepalive(self.conf, self.config_prefix)
 
         if in_cluster:
             self.log.debug("loading kube_config from: in_cluster configuration")

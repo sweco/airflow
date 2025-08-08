@@ -127,9 +127,13 @@ class KubernetesExecutor(BaseExecutor):
 
     RUNNING_POD_LOG_LINES = 100
     supports_ad_hoc_ti_run: bool = True
+    config_prefix = ""
+    conf = conf
+
+    commands_loaded = False
 
     def __init__(self):
-        self.kube_config = KubeConfig()
+        self.kube_config = KubeConfig(prefix=self.config_prefix)
         self._manager = multiprocessing.Manager()
         self.task_queue: Queue[KubernetesJobType] = self._manager.Queue()
         self.result_queue: Queue[KubernetesResultsType] = self._manager.Queue()
@@ -140,7 +144,7 @@ class KubernetesExecutor(BaseExecutor):
         self.last_handled: dict[TaskInstanceKey, float] = {}
         self.kubernetes_queue: str | None = None
         self.task_publish_retries: Counter[TaskInstanceKey] = Counter()
-        self.task_publish_max_retries = conf.getint("kubernetes", "task_publish_max_retries", fallback=0)
+        self.task_publish_max_retries = self.conf.getint("kubernetes", "task_publish_max_retries", fallback=0)
         super().__init__(parallelism=self.kube_config.parallelism)
 
     def _list_pods(self, query_kwargs):
@@ -292,12 +296,14 @@ class KubernetesExecutor(BaseExecutor):
         )
         from airflow.providers.cncf.kubernetes.kube_client import get_kube_client
 
-        self.kube_client = get_kube_client()
+        self.kube_client = get_kube_client(conf=self.conf, config_prefix=self.config_prefix)
         self.kube_scheduler = AirflowKubernetesScheduler(
             kube_config=self.kube_config,
             result_queue=self.result_queue,
             kube_client=self.kube_client,
             scheduler_job_id=self.scheduler_job_id,
+            conf=self.conf,
+            config_prefix=self.config_prefix
         )
         self.event_scheduler = EventScheduler()
 
@@ -497,12 +503,12 @@ class KubernetesExecutor(BaseExecutor):
         self.event_buffer[key] = state, None
 
     @staticmethod
-    def _get_pod_namespace(ti: TaskInstance):
+    def _get_pod_namespace(ti: TaskInstance, conf=..., config_prefix=...):
         pod_override = ti.executor_config.get("pod_override")
         namespace = None
         with suppress(Exception):
             namespace = pod_override.metadata.namespace
-        return namespace or conf.get("kubernetes_executor", "namespace")
+        return namespace or conf.get(config_prefix + "kubernetes_executor", "namespace")
 
     def get_task_log(self, ti: TaskInstance, try_number: int) -> tuple[list[str], list[str]]:
         messages = []
@@ -511,7 +517,7 @@ class KubernetesExecutor(BaseExecutor):
             from airflow.providers.cncf.kubernetes.kube_client import get_kube_client
             from airflow.providers.cncf.kubernetes.pod_generator import PodGenerator
 
-            client = get_kube_client()
+            client = get_kube_client(conf=self.conf, config_prefix=self.config_prefix)
 
             messages.append(f"Attempting to fetch logs from pod {ti.hostname} through kube API")
             selector = PodGenerator.build_selector_for_k8s_executor_pod(
@@ -522,7 +528,7 @@ class KubernetesExecutor(BaseExecutor):
                 run_id=ti.run_id,
                 airflow_worker=ti.queued_by_job_id,
             )
-            namespace = self._get_pod_namespace(ti)
+            namespace = self._get_pod_namespace(ti, self.conf, self.config_prefix)
             pod_list = client.list_namespaced_pod(
                 namespace=namespace,
                 label_selector=selector,
@@ -616,7 +622,7 @@ class KubernetesExecutor(BaseExecutor):
                 run_id=ti.run_id,
                 airflow_worker=ti.queued_by_job_id,
             )
-            namespace = self._get_pod_namespace(ti)
+            namespace = self._get_pod_namespace(ti, self.conf, self.config_prefix)
             pod_list = self.kube_client.list_namespaced_pod(
                 namespace=namespace,
                 label_selector=selector,
@@ -769,13 +775,17 @@ class KubernetesExecutor(BaseExecutor):
 
     @staticmethod
     def get_cli_commands() -> list[GroupCommand]:
-        return [
-            GroupCommand(
-                name="kubernetes",
-                help="Tools to help run the KubernetesExecutor",
-                subcommands=KUBERNETES_COMMANDS,
-            )
-        ]
+        if not KubernetesExecutor.commands_loaded:
+            KubernetesExecutor.commands_loaded = True
+            return [
+                GroupCommand(
+                    name="kubernetes",
+                    help="Tools to help run the KubernetesExecutor",
+                    subcommands=KUBERNETES_COMMANDS,
+                )
+            ]
+        else:
+            return []
 
 
 def _get_parser() -> argparse.ArgumentParser:
